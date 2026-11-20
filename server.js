@@ -18,7 +18,12 @@ const ADMIN_PASSWORD = process.env['FFX-PASS'] || process.env.FFX_PASS || '';
 const DATA_DIR = path.resolve(process.env.DATA_DIR || path.join(ROOT_DIR, 'data'));
 const UPLOAD_DIR = path.join(DATA_DIR, 'uploads');
 const CONFIG_FILE = path.join(DATA_DIR, 'config.json');
-const SESSION_MS = 12 * 60 * 60 * 1000;
+const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const USERS_GH_FILE = GH_DIR + '/users.json';
+const AUTH_SECRET = process.env.AUTH_SECRET || process.env.FFX_AUTH_SECRET || GH_TOKEN || ADMIN_PASSWORD || crypto.randomBytes(32).toString('hex');
+let usersCache = null;
+let usersLoaded = false;
 const MAX_UPLOAD_BYTES = 3 * 1024 * 1024;
 
 const MIME_TYPES = {
@@ -502,6 +507,7 @@ function getHomePage(cb) {
         if (f) html = html.split(IMAGES[k].file).join('/uploads/' + f);
       });
       html = applySiteConfig(html);
+      html = html.replace('</body>', `<style>#sh-auth-link{position:fixed;right:14px;top:calc(env(safe-area-inset-top,0px) + 12px);z-index:9999;background:#1d4ed8;color:#fff;border-radius:999px;padding:10px 15px;font:700 13px system-ui;text-decoration:none;box-shadow:0 5px 18px #1d4ed855}</style><a id="sh-auth-link" href="/login">Login / Register</a><script>(async()=>{try{const r=await fetch('/api/auth/me',{cache:'no-store'});const j=await r.json();const a=document.getElementById('sh-auth-link');if(j.loggedIn){a.textContent='আমার অ্যাকাউন্ট';a.href='/profile';if(window.setProfile)window.setProfile({loggedIn:true,name:j.user.name,email:j.user.identifier,balance:j.user.balance});}}catch(e){}})();</script></body>`);
       const raw = Buffer.from(html, 'utf8');
       zlib.gzip(raw, function (e3, gz) {
         renderCache = { mtime: st.mtimeMs, cfgVersion: cfgVersion, raw: raw, gz: e3 ? null : gz };
@@ -644,8 +650,129 @@ function removeUpload(name) {
   if (name && SAFE_FILE.test(name)) fs.unlink(path.join(UPLOAD_DIR, name), function () {});
 }
 
+
+function authSign(value) {
+  return crypto.createHmac('sha256', AUTH_SECRET).update(value).digest('hex');
+}
+function makeUserToken(userId) {
+  const exp = Date.now() + SESSION_MS;
+  const payload = userId + '.' + exp;
+  return payload + '.' + authSign(payload);
+}
+function getUserId(req) {
+  const raw = String(req.headers.cookie || '').split(';').map(x => x.trim()).find(x => x.indexOf('sh_user=') === 0);
+  if (!raw) return null;
+  const token = decodeURIComponent(raw.slice(8));
+  const p = token.split('.');
+  if (p.length !== 3 || !/^\d+$/.test(p[1]) || Number(p[1]) < Date.now()) return null;
+  const payload = p[0] + '.' + p[1];
+  return safeEq(p[2], authSign(payload)) ? p[0] : null;
+}
+function cookieHeader(token, req) {
+  const secure = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  return 'sh_user=' + encodeURIComponent(token) + '; Path=/; HttpOnly; SameSite=Lax; Max-Age=' + Math.floor(SESSION_MS/1000) + (secure ? '; Secure' : '');
+}
+async function loadUsers() {
+  if (usersLoaded && usersCache) return usersCache;
+  let list = [];
+  if (USE_GH && GH_REPO && storage.ok) {
+    const r = await gh('GET', contentsUrl(USERS_GH_FILE) + '?ref=' + encodeURIComponent(GH_BRANCH));
+    if (r.ok) {
+      const j = await r.json();
+      shas[USERS_GH_FILE] = j.sha;
+      list = JSON.parse(Buffer.from(j.content, 'base64').toString('utf8'));
+    } else if (r.status !== 404) throw ghErr(r.status);
+  } else {
+    try { list = JSON.parse(fs.readFileSync(USERS_FILE, 'utf8')); } catch (_) {}
+  }
+  if (!Array.isArray(list)) list = [];
+  usersCache = list;
+  usersLoaded = true;
+  return usersCache;
+}
+async function saveUsers(list) {
+  if (USE_GH) {
+    if (!storage.ok || !GH_REPO) throw new Error('অ্যাকাউন্ট ডাটাবেস সংযোগ হয়নি। Render Environment-এর GitHub সেটিংস ঠিক করুন।');
+    await enqueue(async function () {
+      const r = await gh('GET', contentsUrl(USERS_GH_FILE) + '?ref=' + encodeURIComponent(GH_BRANCH));
+      if (r.ok) shas[USERS_GH_FILE] = (await r.json()).sha;
+      else if (r.status === 404) delete shas[USERS_GH_FILE];
+      else throw ghErr(r.status);
+      await ghPut(USERS_GH_FILE, Buffer.from(JSON.stringify(list, null, 2)), 'Update user accounts');
+    });
+  } else {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+    const tmp = USERS_FILE + '.tmp';
+    fs.writeFileSync(tmp, JSON.stringify(list, null, 2));
+    fs.renameSync(tmp, USERS_FILE);
+  }
+  usersCache = list;
+  usersLoaded = true;
+}
+function publicUser(u) {
+  return { id: u.id, name: u.name, identifier: u.identifier, balance: Number(u.balance || 0), createdAt: u.createdAt };
+}
+function setAuthCookie(res, token, req) {
+  const secure = (req.headers['x-forwarded-proto'] || '').split(',')[0].trim() === 'https';
+  res.setHeader('Set-Cookie', [
+    cookieHeader(token, req),
+    'sh_logged=1; Path=/; SameSite=Lax; Max-Age=' + Math.floor(SESSION_MS/1000) + (secure ? '; Secure' : '')
+  ]);
+}
+async function handleAuthApi(req, res, pathname) {
+  if (req.method === 'GET' && pathname === '/api/auth/me') {
+    const id = getUserId(req);
+    if (!id) return sendJson(res, 200, { loggedIn: false });
+    const users = await loadUsers();
+    const user = users.find(u => u.id === id);
+    return sendJson(res, 200, user ? { loggedIn: true, user: publicUser(user) } : { loggedIn: false });
+  }
+  if (req.method === 'POST' && pathname === '/api/auth/logout') {
+    res.setHeader('Set-Cookie', [
+      'sh_user=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0',
+      'sh_logged=; Path=/; SameSite=Lax; Max-Age=0'
+    ]);
+    return sendJson(res, 200, { ok: true });
+  }
+  if (req.method === 'POST' && pathname === '/api/auth/register') {
+    const b = await readJson(req, 8192);
+    const name = String(b.name || '').trim().slice(0, 60);
+    const identifier = String(b.identifier || '').trim().toLowerCase().slice(0, 120);
+    const password = String(b.password || '');
+    if (name.length < 2) return sendJson(res, 400, { error: 'আপনার নাম লিখুন' });
+    if (!/^(?:[^\s@]+@[^\s@]+\.[^\s@]+|[0-9+() -]{8,20})$/.test(identifier)) return sendJson(res, 400, { error: 'সঠিক মোবাইল নম্বর বা ইমেইল দিন' });
+    if (password.length < 8 || password.length > 128) return sendJson(res, 400, { error: 'পাসওয়ার্ড কমপক্ষে ৮ অক্ষরের হতে হবে' });
+    const users = await loadUsers();
+    if (users.some(u => u.identifier === identifier)) return sendJson(res, 409, { error: 'এই মোবাইল/ইমেইল দিয়ে আগে অ্যাকাউন্ট খোলা হয়েছে' });
+    const salt = crypto.randomBytes(16).toString('hex');
+    const passwordHash = crypto.scryptSync(password, salt, 64).toString('hex');
+    const user = { id: crypto.randomBytes(16).toString('hex'), name, identifier, salt, passwordHash, balance: 0, createdAt: new Date().toISOString() };
+    users.push(user);
+    await saveUsers(users);
+    setAuthCookie(res, makeUserToken(user.id), req);
+    return sendJson(res, 201, { ok: true, user: publicUser(user) });
+  }
+  if (req.method === 'POST' && pathname === '/api/auth/login') {
+    const b = await readJson(req, 8192);
+    const identifier = String(b.identifier || '').trim().toLowerCase().slice(0, 120);
+    const password = String(b.password || '');
+    const users = await loadUsers();
+    const user = users.find(u => u.identifier === identifier);
+    let valid = false;
+    if (user && user.salt && user.passwordHash) {
+      const hash = crypto.scryptSync(password, user.salt, 64).toString('hex');
+      valid = safeEq(hash, user.passwordHash);
+    }
+    if (!valid) return sendJson(res, 401, { error: 'মোবাইল/ইমেইল অথবা পাসওয়ার্ড ভুল' });
+    setAuthCookie(res, makeUserToken(user.id), req);
+    return sendJson(res, 200, { ok: true, user: publicUser(user) });
+  }
+  return sendJson(res, 404, { error: 'Not found' });
+}
+
 async function handleApi(req, res, pathname) {
   try {
+    if (pathname.startsWith('/api/auth/')) return await handleAuthApi(req, res, pathname);
     if (req.method === 'POST' && pathname === '/api/admin/login') {
       if (!ADMIN_PASSWORD) return sendJson(res, 503, { error: 'Render এ FFX-PASS সেট করা নেই। Environment এ FFX-PASS যোগ করে আবার Deploy করুন।' });
       const ip = clientIp(req);
@@ -833,6 +960,13 @@ function handle(req, res) {
 
   if (pathname.startsWith('/api/')) {
     return handleApi(req, res, pathname);
+  }
+
+  if (pathname === '/login' || pathname === '/login/') {
+    return serveFile(path.join(ROOT_DIR, 'auth.html'), res, 'no-store');
+  }
+  if (pathname === '/profile' || pathname === '/profile/') {
+    return serveFile(path.join(ROOT_DIR, 'profile.html'), res, 'no-store');
   }
 
   if (pathname === '/admin' || pathname === '/admin/') {
