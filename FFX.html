@@ -125,7 +125,11 @@ header{position:sticky;top:0;z-index:40;background:#ffffff;border-bottom:1px sol
 .hd{display:flex;align-items:center;justify-content:space-between;height:68px}
 .logo{display:inline-flex;align-items:center;height:44px;max-width:145px}
 .logo img{height:100%;width:auto;max-width:100%;object-fit:contain;display:block}
-.hr{display:flex;align-items:center;gap:12px}
+.hr{display:flex;align-items:center;gap:10px}
+.auth-actions{display:flex;align-items:center;gap:9px}
+.auth-btn{display:inline-flex;align-items:center;justify-content:center;min-width:82px;height:40px;padding:0 15px;border:2px solid #2563eb;border-radius:999px;font-size:14px;font-weight:800;white-space:nowrap;text-decoration:none}
+.auth-btn.login{background:var(--g);color:#fff;box-shadow:0 7px 17px -6px rgba(37,99,235,.45)}
+.auth-btn.register{background:#fff;color:#2563eb}
 .wallet{display:flex;align-items:center;gap:8px;height:42px;padding:0 16px 0 12px;border-radius:99px;background:var(--g);color:#fff;font-weight:700;font-size:15px;box-shadow:0 8px 18px -6px rgba(37,99,235,.6)}
 .wallet svg{font-size:19px}
 .avatar{display:inline-flex;align-items:center;justify-content:center;width:42px;height:42px;border-radius:50%;padding:2px;background:linear-gradient(135deg,#3b82f6,#1d4ed8);box-shadow:0 6px 14px -4px rgba(37,99,235,.5);cursor:pointer;transition:.2s}
@@ -823,8 +827,10 @@ html,body,.pk,.po,.btn,.pay,.q,.card,.nav a,.pv-back{touch-action:manipulation}
   <div class="wrap hd">
     <a class="logo" href="#"><img src="Main logo.jpg" alt="Nickname" data-site-logo></a>
     <div class="hr">
-      <a class="wallet" href="#"><svg class="i"><use href="#wal"/></svg>0৳</a>
-      <a class="avatar" href="#account" id="avBtn" aria-label="Profile"><div class="av-inner"><svg class="i"><use href="#user"/></svg></div></a>
+      <div class="auth-actions">
+        <a class="auth-btn login" href="/login">Login</a>
+        <a class="auth-btn register" href="/login?mode=register">Register</a>
+      </div>
     </div>
   </div>
 </header>
