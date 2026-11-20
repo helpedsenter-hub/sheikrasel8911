@@ -6,6 +6,17 @@
     "salt": "773859b6febbb156442a16a9c0adba5a",
     "passwordHash": "38b85240fe28c1e33b47818ca71e7a2c6503f91b915c98d462ee1ae6426da4da5cb56f3f7f4da656008064c4b6409791aeda2ac3a30ef6cde5193465a5021a32",
     "balance": 0,
-    "createdAt": "2026-11-20T02:25:43.591Z"
+    "createdAt": "2026-11-20T02:25:43.591Z",
+    "topups": [
+      {
+        "id": "43fa22daba9342aff1ac",
+        "amount": 500,
+        "method": "বিকাশ",
+        "sender": "01863445645",
+        "trx": "VAJSSSJBEN",
+        "status": "pending",
+        "createdAt": "2026-11-20T03:25:18.851Z"
+      }
+    ]
   }
 ]
