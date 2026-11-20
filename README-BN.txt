@@ -27,3 +27,13 @@
 
 ## গুরুত্বপূর্ণ
 এই আপডেট Login/Registration/Profile তৈরি করে। এখনো Free Fire order processing, wallet top-up/payment verification বা automatic diamond delivery যুক্ত হয়নি। Payment verify না করে balance বাড়াবেন না।
+
+
+## Add Money (ম্যানুয়াল বিকাশ/নগদ/রকেট)
+- Home-এর Add Money-তে চাপলে লগইন না থাকলে Login/Register হবে; লগইনের পর Add Money পেজে ফিরবে।
+- পেমেন্ট নম্বর: 01863445965 (বিকাশ/নগদ/রকেট)।
+- ব্যবহারকারী পরিমাণ, প্রেরক নম্বর ও Transaction ID জমা দেবে।
+- Admin প্যানেল: `/admin-topups` — আগের `FFX-PASS` পাসওয়ার্ড দিয়ে লগইন করে অনুরোধ Approve/Reject করুন।
+- Approve করলেই একবার ব্যালেন্স যোগ হবে; Reject করলে ব্যালেন্স যোগ হবে না।
+- `FFX-G`, `FFX-REPO`, `FFX-BRANCH` ঠিকভাবে সেট থাকা জরুরি, কারণ top-up অনুরোধও users.json-এর সঙ্গে সংরক্ষিত হয়।
+- এটি ম্যানুয়াল পেমেন্ট যাচাই; কোনো payment gateway বা স্বয়ংক্রিয় পেমেন্ট যাচাই নয়। নম্বরটি সব তিন মাধ্যমে চালু/merchant account কিনা নিজে নিশ্চিত করুন।

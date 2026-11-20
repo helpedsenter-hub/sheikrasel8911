@@ -507,6 +507,7 @@ function getHomePage(cb) {
         if (f) html = html.split(IMAGES[k].file).join('/uploads/' + f);
       });
       html = applySiteConfig(html);
+      html = html.replace('</body>', "<script>\n(function(){\n  async function route(){\n    const nav=document.querySelectorAll('nav.nav a');\n    if(nav[2]){nav[2].textContent='Add Money';nav[2].addEventListener('click',async function(e){e.preventDefault();try{const r=await fetch('/api/auth/me',{cache:'no-store'}),j=await r.json();location.href=j.loggedIn?'/add-money':'/login?next='+encodeURIComponent('/add-money');}catch(_){location.href='/login?next='+encodeURIComponent('/add-money');}});}\n    if(nav[4]){nav[4].textContent='Profile';nav[4].addEventListener('click',function(e){e.preventDefault();location.href='/profile';});}\n    const av=document.getElementById('avBtn');if(av)av.addEventListener('click',function(e){e.preventDefault();location.href='/profile';});\n    const add=document.getElementById('acAdd');if(add)add.onclick=async function(){try{const r=await fetch('/api/auth/me',{cache:'no-store'}),j=await r.json();location.href=j.loggedIn?'/add-money':'/login?next='+encodeURIComponent('/add-money');}catch(_){location.href='/login?next='+encodeURIComponent('/add-money');}};\n  }\n  if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',route);else route();\n})();\n</script>" + '</body>');
       html = html.replace('</body>', `<style>#sh-auth-link{position:fixed;right:14px;top:calc(env(safe-area-inset-top,0px) + 12px);z-index:9999;background:#1d4ed8;color:#fff;border-radius:999px;padding:10px 15px;font:700 13px system-ui;text-decoration:none;box-shadow:0 5px 18px #1d4ed855}</style><a id="sh-auth-link" href="/login">Login / Register</a><script>(async()=>{try{const r=await fetch('/api/auth/me',{cache:'no-store'});const j=await r.json();const a=document.getElementById('sh-auth-link');if(j.loggedIn){a.textContent='আমার অ্যাকাউন্ট';a.href='/profile';if(window.setProfile)window.setProfile({loggedIn:true,name:j.user.name,email:j.user.identifier,balance:j.user.balance});}}catch(e){}})();</script></body>`);
       const raw = Buffer.from(html, 'utf8');
       zlib.gzip(raw, function (e3, gz) {
@@ -719,6 +720,40 @@ function setAuthCookie(res, token, req) {
     'sh_logged=1; Path=/; SameSite=Lax; Max-Age=' + Math.floor(SESSION_MS/1000) + (secure ? '; Secure' : '')
   ]);
 }
+
+async function handleWalletApi(req, res, pathname) {
+  if (req.method === 'POST' && pathname === '/api/wallet/request') {
+    const id = getUserId(req);
+    if (!id) return sendJson(res, 401, { error: 'Add Money করতে আগে লগইন করুন' });
+    const b = await readJson(req, 8192);
+    const amount = Number(b.amount);
+    const method = String(b.method || '');
+    const sender = String(b.sender || '').replace(/\s+/g, '').slice(0, 24);
+    const trx = String(b.trx || '').trim().toUpperCase().slice(0, 40);
+    if (!Number.isFinite(amount) || amount < 10 || amount > 50000) return sendJson(res, 400, { error: '১০ থেকে ৫০,০০০ টাকার মধ্যে পরিমাণ দিন' });
+    if (!['বিকাশ', 'নগদ', 'রকেট'].includes(method)) return sendJson(res, 400, { error: 'পেমেন্ট মাধ্যম নির্বাচন করুন' });
+    if (!/^01[3-9]\d{8}$/.test(sender)) return sendJson(res, 400, { error: 'সঠিক ১১ সংখ্যার প্রেরক নম্বর দিন' });
+    if (!/^[A-Z0-9-]{6,40}$/.test(trx)) return sendJson(res, 400, { error: 'সঠিক Transaction ID দিন' });
+    const users = await loadUsers();
+    const duplicate = users.some(u => (u.topups || []).some(t => t.trx === trx && t.status !== 'rejected'));
+    if (duplicate) return sendJson(res, 409, { error: 'এই Transaction ID আগে জমা হয়েছে' });
+    const user = users.find(u => u.id === id);
+    if (!user) return sendJson(res, 401, { error: 'অ্যাকাউন্ট পাওয়া যায়নি' });
+    user.topups = Array.isArray(user.topups) ? user.topups : [];
+    const request = { id: crypto.randomBytes(10).toString('hex'), amount: Math.round(amount * 100) / 100, method, sender, trx, status: 'pending', createdAt: new Date().toISOString() };
+    user.topups.unshift(request);
+    await saveUsers(users);
+    return sendJson(res, 201, { ok: true, message: 'অনুরোধ জমা হয়েছে। Admin যাচাইয়ের পর ব্যালেন্স যোগ হবে।', request });
+  }
+  if (req.method === 'GET' && pathname === '/api/wallet/history') {
+    const id = getUserId(req);
+    if (!id) return sendJson(res, 401, { error: 'লগইন করুন' });
+    const users = await loadUsers(), user = users.find(u => u.id === id);
+    return sendJson(res, 200, { requests: (user && user.topups || []).map(t => ({ amount:t.amount, method:t.method, trx:t.trx, status:t.status, createdAt:t.createdAt })) });
+  }
+  return sendJson(res, 404, { error: 'Not found' });
+}
+
 async function handleAuthApi(req, res, pathname) {
   if (req.method === 'GET' && pathname === '/api/auth/me') {
     const id = getUserId(req);
@@ -773,6 +808,7 @@ async function handleAuthApi(req, res, pathname) {
 async function handleApi(req, res, pathname) {
   try {
     if (pathname.startsWith('/api/auth/')) return await handleAuthApi(req, res, pathname);
+    if (pathname.startsWith('/api/wallet/')) return await handleWalletApi(req, res, pathname);
     if (req.method === 'POST' && pathname === '/api/admin/login') {
       if (!ADMIN_PASSWORD) return sendJson(res, 503, { error: 'Render এ FFX-PASS সেট করা নেই। Environment এ FFX-PASS যোগ করে আবার Deploy করুন।' });
       const ip = clientIp(req);
@@ -791,6 +827,29 @@ async function handleApi(req, res, pathname) {
 
     if (!pathname.startsWith('/api/admin/')) return sendJson(res, 404, { error: 'Not found' });
     if (!isAuthed(req)) return sendJson(res, 401, { error: 'লগইন করুন' });
+
+    if (req.method === 'GET' && pathname === '/api/admin/topups') {
+      const users = await loadUsers();
+      const requests = [];
+      users.forEach(u => (u.topups || []).forEach(t => requests.push({ userId:u.id, name:u.name, identifier:u.identifier, ...t })));
+      requests.sort((a,b) => String(b.createdAt).localeCompare(String(a.createdAt)));
+      return sendJson(res, 200, { requests });
+    }
+    if (req.method === 'POST' && pathname === '/api/admin/topups/decision') {
+      const b = await readJson(req, 8192);
+      if (!['approve','reject'].includes(b.decision)) return sendJson(res, 400, { error: 'সিদ্ধান্ত ঠিক নেই' });
+      const users = await loadUsers(), user = users.find(u => u.id === String(b.userId || ''));
+      if (!user) return sendJson(res, 404, { error: 'ব্যবহারকারী পাওয়া যায়নি' });
+      const item = (user.topups || []).find(t => t.id === String(b.requestId || ''));
+      if (!item) return sendJson(res, 404, { error: 'অনুরোধ পাওয়া যায়নি' });
+      if (item.status !== 'pending') return sendJson(res, 409, { error: 'এই অনুরোধের সিদ্ধান্ত আগেই নেওয়া হয়েছে' });
+      item.status = b.decision === 'approve' ? 'approved' : 'rejected';
+      item.reviewedAt = new Date().toISOString();
+      if (b.decision === 'approve') user.balance = Math.round((Number(user.balance || 0) + Number(item.amount)) * 100) / 100;
+      await saveUsers(users);
+      return sendJson(res, 200, { ok: true, balance: Number(user.balance || 0) });
+    }
+
 
     if (req.method === 'GET' && pathname === '/api/admin/config') {
       return sendJson(res, 200, currentView());
@@ -968,6 +1027,8 @@ function handle(req, res) {
   if (pathname === '/profile' || pathname === '/profile/') {
     return serveFile(path.join(ROOT_DIR, 'profile.html'), res, 'no-store');
   }
+  if (pathname === '/add-money' || pathname === '/add-money/') return serveFile(path.join(ROOT_DIR, 'add-money.html'), res, 'no-store');
+  if (pathname === '/admin-topups' || pathname === '/admin-topups/') return serveFile(path.join(ROOT_DIR, 'admin-topups.html'), res, 'no-store');
 
   if (pathname === '/admin' || pathname === '/admin/') {
     const f = path.join(ROOT_DIR, 'admin.html');

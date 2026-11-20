@@ -14,7 +14,7 @@ let mode='login';const $=id=>document.getElementById(id);
 function setMode(m){mode=m;$('loginTab').classList.toggle('on',m==='login');$('regTab').classList.toggle('on',m==='register');$('nameField').hidden=m!=='register';$('name').required=m==='register';$('submit').textContent=m==='login'?'লগইন করুন':'অ্যাকাউন্ট খুলুন';$('password').autocomplete=m==='login'?'current-password':'new-password';$('msg').textContent='';}
 $('loginTab').onclick=()=>setMode('login');$('regTab').onclick=()=>setMode('register');
 $('authForm').onsubmit=async e=>{e.preventDefault();$('submit').disabled=true;$('submit').textContent='অপেক্ষা করুন…';$('msg').textContent='';
-try{const r=await fetch('/api/auth/'+mode,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({name:$('name').value,identifier:$('identifier').value,password:$('password').value})});const j=await r.json();if(!r.ok)throw new Error(j.error||'সমস্যা হয়েছে');location.href='/profile';}
+try{const r=await fetch('/api/auth/'+mode,{method:'POST',headers:{'Content-Type':'application/json'},credentials:'same-origin',body:JSON.stringify({name:$('name').value,identifier:$('identifier').value,password:$('password').value})});const j=await r.json();if(!r.ok)throw new Error(j.error||'সমস্যা হয়েছে');const n=new URLSearchParams(location.search).get('next');location.href=(n && n.startsWith('/') && !n.startsWith('//'))?n:'/profile';}
 catch(err){$('msg').textContent=err.message;}finally{$('submit').disabled=false;$('submit').textContent=mode==='login'?'লগইন করুন':'অ্যাকাউন্ট খুলুন';}};
-fetch('/api/auth/me',{cache:'no-store'}).then(r=>r.json()).then(j=>{if(j.loggedIn)location.href='/profile';}).catch(()=>{});
+fetch('/api/auth/me',{cache:'no-store'}).then(r=>r.json()).then(j=>{if(j.loggedIn)const n=new URLSearchParams(location.search).get('next');location.href=(n && n.startsWith('/') && !n.startsWith('//'))?n:'/profile';}).catch(()=>{});
 </script></body></html>
